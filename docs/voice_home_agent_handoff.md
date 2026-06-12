@@ -154,7 +154,12 @@ If PydanticAI fails a core requirement, compare Agno, Google ADK, OpenAI Agents 
 
 ### 8.2 Wake word
 
-- Use Porcupine first unless licensing, ARM compatibility, or measurable quality blocks deployment.
+- The wake word engine must be swappable via configuration (`wake_word.provider`).
+- Two primary options:
+  - **Porcupine (Picovoice)**: 16 built-in keywords (alexa, americano, bumblebee, computer, grapefruit, grasshopper, hey barista, hey google, hey siri, jarvis, ok google, picovoice, porcupine, terminator, etc.). Custom keywords require a Picovoice AccessKey (free tier: 3 users) and platform-specific `.ppn` files. All modern versions (v2.0.0+) require the AccessKey even for built-in keywords. v1.9.5 works without a key but is unmaintained since 2020.
+  - **OpenWakeWord**: Fully open-source (Apache 2.0), no API key or account needed. Supports custom keywords via fine-tuning on synthetic speech. Runs on RPi4 aarch64. Slightly lower accuracy than Porcupine but no external dependencies. Recommended for custom wake words.
+- Recommendation: OpenWakeWord for custom wake words (e.g. "hey hermes"); Porcupine only if built-in keywords suffice and an AccessKey is acceptable.
+- Both must implement the same interface: `start_listening()`, `stop_listening()`, `on_wake(callback)`.
 - Wake sensitivity must be configurable.
 - Use cooldown and duplicate-trigger suppression.
 - Keep wake detection local.
@@ -191,6 +196,16 @@ The design must include:
 - counters for false wakes and abandoned captures.
 
 VAD must not be treated as a wake-word detector.
+
+### 8.5 Speech-to-text
+
+The system must support multiple speech-to-text strategies, with the primary path being direct audio input to a multimodal model:
+
+- **Direct audio to multimodal LLM** (primary path): Send captured audio directly to an audio-capable model (e.g. Gemini, GPT-4o-audio). Preserves tone, emotion, and avoids STT transcription errors. Requires a provider that supports both audio input and tool calling simultaneously.
+- **Parakeet TDT 0.6B** (STT fallback): ONNX CPU-optimized, ~300ms latency on short utterances, 25 languages, ~600MB footprint. Ideal for RPi4 since it runs entirely on CPU. OpenAI-compatible API on port :5093.
+- **Whisper** (STT fallback): Higher accuracy than Parakeet, but requires more resources. Can run on CPU (slower) or GPU. Available in multiple sizes (tiny, base, small, medium, large).
+- The fallback chain must be configurable: `direct → parakeet → whisper` or any subset.
+- Provider and model names must be runtime configuration, not hardcoded.
 
 ---
 
@@ -478,7 +493,8 @@ Requirements:
 
 - test at least two audio-capable providers or models;
 - primary path is direct audio input;
-- fallback path is STT followed by a text model;
+- fallback path is STT (Parakeet or Whisper) followed by a text model;
+- STT engine selection must be configurable (`stt.mode: direct | parakeet | whisper`);
 - provider and model names must be configuration;
 - do not hardcode one vendor;
 - do not create a custom provider abstraction unless a concrete incompatibility requires it;
@@ -493,7 +509,14 @@ Do not assume that generic multimodal support automatically means audio tool-cal
 ## 15. TTS and playback
 
 - Use the Jabra speaker in v1.
-- Support at least one local TTS and one cloud TTS through configuration.
+- The TTS engine must be swappable via configuration (`tts.provider`).
+- Supported TTS engines:
+  - **Supertonic 3**: 99M parameters, ONNX CPU, 31 languages including Romanian (`ro`). Local, open-weight, no API key. ~1.7s per short reply on x86_64, slower on RPi4. Quality is good with natural number handling. Supports streaming and OpenAI-compatible API. Tested with Romanian — generates natural speech with numbers and English loanwords.
+  - **Piper**: Lightweight (~10MB models), very fast on CPU, supports Romanian. More robotic voice but ideal for latency-critical responses.
+  - **Edge TTS**: Free, uses Microsoft Edge's speech synthesis API. Excellent Romanian voice quality. Can run locally (does not require a cloud account). Use as high-quality fallback.
+  - **Cloud TTS provider**: Optional, configurable (e.g. Google Cloud TTS, OpenAI TTS). Use only when local TTS quality is insufficient and connectivity is available.
+- Recommendation: Supertonic 3 for primary local TTS, Piper for low-latency fallback, Edge TTS or cloud provider for highest quality when online.
+- All TTS engines must implement the same interface: `speak(text) -> play audio`.
 - Romanian voice quality matters.
 - Wait until playback completes before rearming VAD for a clarification reply.
 - Prevent the assistant from recursively triggering itself.
@@ -593,7 +616,7 @@ audio:
   channels: 1
 
 wake_word:
-  provider: porcupine
+  provider: openwakeword  # porcupine | openwakeword
   phrase: "hey hermes"
   sensitivity: 0.35
   cooldown_ms: 4000
@@ -608,6 +631,13 @@ vad:
   post_roll_ms: 200
   max_utterance_seconds: 15
 
+stt:
+  mode: direct             # direct | parakeet | whisper
+  provider: configurable
+  model: configurable
+  fallback_mode: parakeet  # parakeet | whisper
+  fallback_stt_enabled: true
+
 conversation:
   ram_session_ttl_minutes: 60
   max_turns_before_compaction: 20
@@ -617,15 +647,20 @@ agent:
   framework: pydantic_ai
   provider: configurable
   model: configurable
-  fallback_stt_enabled: true
 
 home_assistant:
   mcp_url: "http://homeassistant:8123/api/mcp"
   direct_api_fallback: false
 
 tts:
-  provider: configurable
+  provider: supertonic      # supertonic | piper | edge-tts | cloud
+  voice: "F1"               # Supertonic: M1-M5, F1-F5
+  quality_steps: 8           # Supertonic: 5 (fast) - 12 (high), default 8
+  speed: 1.0
   output: local_device
+  cloud:
+    provider: ""             # e.g. google, openai
+    api_key: ""              # from env, not hardcoded
 ```
 
 ---

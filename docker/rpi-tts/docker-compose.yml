@@ -1,0 +1,21 @@
+services:
+  supertonic-tts:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: supertonic-tts
+    restart: unless-stopped
+    network_mode: "host"
+    environment:
+      - PULSE_SERVER=unix:/run/user/1000/pulse/native
+      - XDG_RUNTIME_DIR=/run/user/1000
+    devices:
+      - /dev/snd:/dev/snd
+    group_add:
+      - audio
+    cap_add:
+      - SYS_NICE
+    volumes:
+      - /run/user/1000:/run/user/1000:rw
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro

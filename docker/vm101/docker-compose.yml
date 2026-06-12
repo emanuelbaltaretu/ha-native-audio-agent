@@ -1,0 +1,12 @@
+services:
+  supertonic-tts:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: supertonic-tts
+    image: supertonic-tts:v101
+    restart: unless-stopped
+    ports:
+      - "8020:8020"
+    environment:
+      - PYTHONUNBUFFERED=1

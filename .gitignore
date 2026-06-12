@@ -21,3 +21,7 @@ audio-diagnostics/
 *.mp3
 *.ogg
 *.m4a
+*.onnx
+models/
+voice_styles/
+output/

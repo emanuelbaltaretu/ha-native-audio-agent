@@ -30,17 +30,30 @@ This document captures current facts and open questions for local wake-word engi
 
 ### Confirmed Facts
 
-- openWakeWord is open-source and does not require a cloud account or runtime API key.
+- openWakeWord is open-source (Apache 2.0) and does not require a cloud account or runtime API key.
 - It can run offline after models are available locally.
 - It supports Linux ARM64/Raspberry Pi class devices according to its published docs and ecosystem usage.
 - It uses local model files, commonly TensorFlow Lite or ONNX depending on backend.
 - It supports configurable thresholds and can be combined with VAD/noise suppression features.
 - Custom wake-word training is documented through project tooling and notebooks.
+- **Custom keywords**: Unlike Porcupine's 16 fixed built-in keywords, openWakeWord allows training custom wake phrases on synthetic speech data entirely offline.
 
 ### Open Questions
 
 - False-positive behavior in the target room must be measured with real TV/Sonos background audio.
 - Custom model quality for Romanian household usage must be evaluated with local fixtures.
+
+## Comparison: Porcupine vs OpenWakeWord
+
+| Aspect | Porcupine | OpenWakeWord |
+|---|---|---|
+| API key needed | ✅ v2.0.0+ (free tier: 3 users) | ❌ None |
+| Built-in keywords | 16 (alexa, jarvis, porcupine, etc.) | ~5 pre-trained |
+| Custom keywords | Via Picovoice Console (paid) | Via fine-tuning (free, synthetic data) |
+| RPi4 aarch64 | ✅ Native .so bundled | ✅ ONNX/TFLite |
+| Docker-friendly | ⚠️ AccessKey validation at init, may fail on restart | ✅ Fully offline |
+| Maintenance | Active (v4.0.2) | Active |
+| Accuracy | Very high | Good (slightly lower) |
 
 ## Other Local Options
 

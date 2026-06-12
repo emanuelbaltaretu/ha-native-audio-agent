@@ -56,5 +56,27 @@
 2. **Gemini all-three-at-once:** Does Gemini support audio input, function calling, and structured output in a single turn?
 3. **HA-as-MCP-server:** Is there a standard way to expose Home Assistant as an MCP server that PydanticAI can connect to? Or does the agent need to use HA Assist API or direct REST calls as a fallback?
 4. **Docker audio reliability:** What is the minimum working configuration for audio capture and playback inside an aarch64 Docker container on Raspberry Pi OS?
-5. **VAD performance under Docker:** Can Silero VAD sustain real-time inference inside the container without excessive CPU?
-6. **Porcupine setup effort:** How much platform-specific build work is required for a custom wake word on aarch64 Linux?
+### Porcupine setup effort
+How much platform-specific build work is required for a custom wake word on aarch64 Linux?
+
+## Updated Findings (June 2026)
+
+### Supertonic 3 TTS — Romanian confirmed
+- Supertonic 3 (supertone-inc/supertonic) supports 31 languages including Romanian (`ro`).
+- Tested via Docker (python:3.11-slim + `pip install supertonic`). Generated 77s of Romanian speech with numbers and English loanwords successfully.
+- Model: ~400MB, ONNX CPU inference, 99M parameters.
+- Voices: 10 built-in (M1-M5, F1-F5).
+- Speed: ~1x realtime on x86_64 (Intel i7-12700KF), slower on RPi4.
+- API: OpenAI-compatible (`/v1/audio/speech`) with `lang` parameter.
+- Quality adjustable via `total_steps` (5=fast/low, 12=high).
+
+### Parakeet STT
+- CPU-only ONNX, ~300ms per 2.4s utterance, 25 languages.
+- RPi4 compatible (aarch64).
+- Used by groxaxo/Local-VoiceMode-LLM as the primary STT backend.
+
+### Porcupine — version details confirmed
+- v1.9.5: last version without AccessKey requirement. Python >=3. No updates since 2020.
+- v2.0.0+: AccessKey required for ALL keyword types (built-in and custom).
+- v4.0.2: latest. Python >=3.9. Includes RPi4 cortex-a72-aarch64 native .so.
+- All v2+ versions share the same 16 built-in keywords. No new keywords added.

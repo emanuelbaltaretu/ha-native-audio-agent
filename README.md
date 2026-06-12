@@ -7,9 +7,23 @@ HA Native Audio Agent is an experimental low-latency native audio agent for Home
 ```text
 config/                 Example configuration
 docs/                   Research notes and milestone plans
+docker/rpi-tts/         RPi4 Docker setup (benchmarks, TTS server source)
+docker/vm101/           vm101 Docker setup (production TTS server)
 src/ha_native_audio_agent/   Python package
 tests/                  Unit and offline integration tests
 ```
+
+## TTS Architecture
+
+The text-to-speech runs as a **dedicated Docker container on vm101** (192.168.0.55), not on the RPi4.
+
+| Component | Host | Role |
+|-----------|------|------|
+| RPi4 (rpi166) | Local network | Wake word, VAD, audio I/O, barge-in |
+| vm101 (prod-gpu) | 192.168.0.55 | Supertonic ONNX TTS server |
+| TTS model | Supertonic 3 FINAL | Vector estimator INT8, rest FP32 |
+
+See [`docs/deployment.md`](docs/deployment.md) for setup and [`docs/tts-optimization.md`](docs/tts-optimization.md) for benchmarks.
 
 ## Current Status
 
