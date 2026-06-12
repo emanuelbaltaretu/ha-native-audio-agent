@@ -1,0 +1,40 @@
+audio:
+  input_device: "Jabra SPEAK 510 USB"
+  output_device: "Jabra SPEAK 510 USB"
+  sample_rate: 16000
+  channels: 1
+
+wake_word:
+  provider: porcupine
+  phrase: "hey hermes"
+  sensitivity: 0.35
+  cooldown_ms: 4000
+
+vad:
+  provider: silero
+  start_threshold: 0.70
+  end_threshold: 0.40
+  min_speech_ms: 250
+  end_silence_ms: 700
+  pre_roll_ms: 350
+  post_roll_ms: 200
+  max_utterance_seconds: 15
+
+conversation:
+  ram_session_ttl_minutes: 60
+  max_turns_before_compaction: 20
+  max_tool_steps: 6
+
+agent:
+  framework: pydantic_ai
+  provider: configurable
+  model: configurable
+  fallback_stt_enabled: true
+
+home_assistant:
+  mcp_url: null
+  direct_api_fallback: false
+
+tts:
+  provider: configurable
+  output: local_device

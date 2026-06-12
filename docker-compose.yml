@@ -1,0 +1,16 @@
+services:
+  ha-native-audio-agent:
+    build:
+      context: .
+    image: ha-native-audio-agent:milestone-0
+    platform: linux/arm64/v8
+    env_file:
+      - .env
+    devices:
+      - /dev/snd:/dev/snd
+    group_add:
+      - audio
+    volumes:
+      - ./config:/app/config:ro
+      - ./audio-diagnostics:/app/audio-diagnostics
+    command: ["python", "-m", "ha_native_audio_agent"]
