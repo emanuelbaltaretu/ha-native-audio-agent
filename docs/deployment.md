@@ -4,7 +4,7 @@
 
 ```
 ┌─────────────────┐         HTTP chunked          ┌──────────────────────┐
-│  RPi4 (rpi166)  │  ◄────────────────────────►  │  vm101 (prod-gpu)    │
+│  RPi4 (rpi166)  │  ◄────────────────────────►  │  vm101               │
 │                 │   POST /tts/stream-pcm        │                      │
 │  Wake word      │         PCM/WAV               │  Supertonic ONNX     │
 │  VAD            │                               │  Docker :8020        │
@@ -15,7 +15,11 @@
 
 ## vm101 Deployment
 
-**Server:** `192.168.0.55` (prod-gpu-ubuntu)
+**Server:** `192.168.0.55`
+
+The default vm101 deployment uses CPU ONNX inference. OpenVINO/GPU remains
+available as an opt-in experiment, but measured TTFA is slower for the current
+Supertonic model on this host.
 
 The server code is shared package code:
 
@@ -94,18 +98,10 @@ Optional latency controls:
 
 ## Benchmarks (vm101, i5-12400, 10 cores)
 
-### Text: 507 chars Romanian (with English words + numbers)
-
-| Config | TTFA | Total gen | Audio dur | RTF | vs RPi4 |
-|--------|:---:|:---:|:---:|:---:|:---:|
-| steps=2 | **0.25s** | 3.21s | ~30s | ~0.1 | 18x faster |
-| steps=3 | **0.34s** | 4.22s | ~30s | ~0.14 | — |
-| steps=5 | **0.49s** | 6.12s | ~30s | ~0.2 | — |
-
 **Quality-safe default:** use `steps=5` without aggressive `first_steps` or `first_max`
 until a specific text/voice profile has been listened to and accepted.
 
-### RPi client first-frame benchmark (June 13, 2026)
+### RPi client to vm101 streaming benchmark (June 13, 2026)
 
 Measured from `rpi166` to vm101 using:
 
@@ -117,15 +113,36 @@ python3 scripts/benchmark_tts_ttfa.py \
 
 | Config | First PCM frame p50 | Server TTFA p50 | Full stream p50 |
 |---|---:|---:|---:|
-| `steps=5` | 0.897s | 0.892s | 0.901s |
-| `steps=3` | 0.529s | 0.523s | 0.532s |
-| `steps=5, first_steps=3` | 0.608s | 0.603s | 0.611s |
-| `steps=5, first_steps=3, first_max=18` | **0.419s** | **0.414s** | 1.096s |
-| `steps=5, first_steps=3, first_max=14` | 0.430s | 0.424s | 1.032s |
+| vm101 CPU live, `steps=5` | 0.922s | 0.912s | 0.923s |
+| vm101 CPU live, `steps=5, first_steps=4` | 0.758s | 0.753s | 0.760s |
+| vm101 CPU live, `steps=5, first_steps=3` | 0.675s | 0.671s | 0.677s |
+| vm101 CPU test, `steps=5, first_steps=2` | **0.416s** | **0.412s** | 0.417s |
+| vm101 OpenVINO/GPU, `steps=5` | 1.114s | 1.110s | 1.116s |
+| vm101 OpenVINO/GPU, `steps=5, first_steps=3` | 0.692s | 0.688s | 0.694s |
 
 These numbers are latency measurements, not quality approvals. In live listening,
 aggressive `first_steps`/`first_max` can damage the first phrase. Treat them as
 experimental knobs and validate by ear before making them defaults.
+
+### RPi local vs vm101 generation benchmark (June 13, 2026)
+
+Measured from `rpi166` without audio playback against non-streaming `/tts`, using
+`"Am aprins lumina din dormitor."`:
+
+| Host | Config | HTTP elapsed p50 | Generation p50 |
+|---|---|---:|---:|
+| RPi local CPU | `steps=5` | 3.897s | 3.890s |
+| RPi local CPU | `steps=3` | 2.665s | 2.660s |
+| RPi local CPU | `steps=2` | 2.022s | 2.010s |
+| vm101 CPU | `steps=5` | 0.758s | 0.750s |
+| vm101 CPU | `steps=3` | 0.592s | 0.580s |
+| vm101 CPU | `steps=2` | 0.427s | 0.420s |
+| vm101 OpenVINO/GPU | `steps=5` | 1.099s | 1.090s |
+| vm101 OpenVINO/GPU | `steps=3` | 0.693s | 0.690s |
+| vm101 OpenVINO/GPU | `steps=2` | 0.484s | 0.480s |
+
+Conclusion: keep TTS inference on vm101 CPU for now. RPi should stay focused on
+microphone capture, wake word, VAD, playback, and barge-in.
 
 ## Chunking Strategy
 

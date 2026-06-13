@@ -117,7 +117,7 @@ Repeat until LLM finishes
 
 ## vm101 Deployment Results (June 2026)
 
-**Hardware:** Intel i5-12400 (6C/12T), 31GB RAM, CPU-only ONNX inference
+**Hardware:** Intel i5-12400 (6C/12T), 31GB RAM, CPU ONNX inference by default
 **Server:** Docker container, port 8020, streaming via HTTP chunked
 
 ### Streaming TTFA Benchmark (507 chars Romanian text with code-switching)
@@ -128,9 +128,13 @@ Repeat until LLM finishes
 | **steps=3, speed=1.5** | **0.34s** | 4.22s | ~0.14 | — |
 | **steps=5, speed=1.5** | **0.49s** | 6.12s | ~0.20 | — |
 
-**Verdict:** On vm101, even steps=5 achieves TTFA < 0.5s. The i5-12400's AVX2 support makes ONNX inference ~18x faster than Cortex-A72 on RPi4.
+**Verdict:** vm101 CPU is the right default for the current Supertonic model.
+OpenVINO/GPU is available but measured slower on this host for short assistant
+responses.
 
-**Recommended config for vm101:** steps=5, speed=1.5 — best quality, TTFA still under 0.5s.
+**Recommended config for vm101:** `steps=5`, `speed=1.5` for the quality-safe
+baseline. Use `first_steps` only as an experimental latency knob after listening
+tests approve the first phrase quality.
 
 ### 2026-06-13 update: first-frame TTFA on RPi client
 
@@ -142,16 +146,37 @@ For `"Am aprins lumina din dormitor."`, measured from `rpi166` to vm101:
 
 | Config | First PCM frame p50 | Server TTFA p50 | Full stream p50 |
 |---|---:|---:|---:|
-| `steps=5` | 0.897s | 0.892s | 0.901s |
-| `steps=3` | 0.529s | 0.523s | 0.532s |
-| `steps=5, first_steps=3` | 0.608s | 0.603s | 0.611s |
-| `steps=5, first_steps=3, first_max=18` | **0.419s** | **0.414s** | 1.096s |
-| `steps=5, first_steps=3, first_max=14` | 0.430s | 0.424s | 1.032s |
+| vm101 CPU live, `steps=5` | 0.922s | 0.912s | 0.923s |
+| vm101 CPU live, `steps=5, first_steps=4` | 0.758s | 0.753s | 0.760s |
+| vm101 CPU live, `steps=5, first_steps=3` | 0.675s | 0.671s | 0.677s |
+| vm101 CPU test, `steps=5, first_steps=2` | **0.416s** | **0.412s** | 0.417s |
+| vm101 OpenVINO/GPU, `steps=5` | 1.114s | 1.110s | 1.116s |
+| vm101 OpenVINO/GPU, `steps=5, first_steps=3` | 0.692s | 0.688s | 0.694s |
 
 Interpretation: with Supertonic, TTFA is still bounded by full generation of the first
 text chunk. Making the first chunk smaller or using fewer first steps reduces latency,
 but it can audibly damage the opening phrase. These settings should stay experimental
 until each candidate is validated with live listening tests.
+
+### 2026-06-13 update: RPi local vs vm101
+
+Measured from `rpi166` without audio playback against non-streaming `/tts`, using
+`"Am aprins lumina din dormitor."`:
+
+| Host | Config | HTTP elapsed p50 | Generation p50 |
+|---|---|---:|---:|
+| RPi local CPU | `steps=5` | 3.897s | 3.890s |
+| RPi local CPU | `steps=3` | 2.665s | 2.660s |
+| RPi local CPU | `steps=2` | 2.022s | 2.010s |
+| vm101 CPU | `steps=5` | 0.758s | 0.750s |
+| vm101 CPU | `steps=3` | 0.592s | 0.580s |
+| vm101 CPU | `steps=2` | 0.427s | 0.420s |
+| vm101 OpenVINO/GPU | `steps=5` | 1.099s | 1.090s |
+| vm101 OpenVINO/GPU | `steps=3` | 0.693s | 0.690s |
+| vm101 OpenVINO/GPU | `steps=2` | 0.484s | 0.480s |
+
+Conclusion: RPi local inference is too slow for the target assistant loop. Keep
+the model on vm101 CPU and use the RPi for capture/playback edge duties.
 
 ## Code Architecture Cleanup
 
@@ -176,7 +201,8 @@ RPi4 (rpi166)                    vm101 (192.168.0.55)
 │ Wake word + VAD  │  ◄─────────►  │  Supertonic TTS       │
 │ Microfon         │  POST/tts     │  (Docker :8020)        │
 │ Playback + barge │  stream       │  steps=5, speed=1.5    │
-└─────────────────┘               │  TTFA ~0.5s            │
+└─────────────────┘               │  TTFA ~0.8s safe /     │
+                                  │  ~0.5s experimental    │
                                    └──────────────────────┘
 ```
 
