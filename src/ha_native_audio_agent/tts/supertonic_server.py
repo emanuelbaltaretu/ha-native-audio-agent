@@ -50,10 +50,8 @@ class OpenVINOModel:
         self._input_names = input_names
 
     def run(self, output_names: list[str] | None, input_feed: dict[str, Any]) -> tuple[Any]:
-        for name in self._input_names:
-            if name in input_feed:
-                self._infer_request.set_tensor(name, input_feed[name])
-        self._infer_request.infer()
+        inputs = {name: input_feed[name] for name in self._input_names if name in input_feed}
+        self._infer_request.infer(inputs)
         return (self._infer_request.get_output_tensor(0).data,)
 
 
