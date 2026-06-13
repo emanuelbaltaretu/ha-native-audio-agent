@@ -13,6 +13,7 @@ import time
 import struct
 import logging
 import threading
+import os
 from queue import Queue, Empty
 from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -20,7 +21,9 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 
 import numpy as np
+import onnxruntime as ort
 from supertonic.loader import load_model, load_voice_style_from_name
+import supertonic.loader as st_loader
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("tts-server")
@@ -30,6 +33,44 @@ DEFAULT_VOICE = "F1"
 DEFAULT_LANG = "ro"
 DEFAULT_STEPS = 5
 DEFAULT_SPEED = 1.5
+
+# === OpenVINO GPU acceleration ===
+_openvino_available = False
+_ov_gpu_devices = []
+
+class OpenVINOModel:
+    """Wraps an OpenVINO compiled model to match ONNX Runtime's run() interface."""
+    def __init__(self, compiled_model, input_names, output_name):
+        self._compiled = compiled_model
+        self._infer_request = compiled_model.create_infer_request()
+        self._input_names = input_names
+        self._output_name = output_name
+    
+    def run(self, output_names, input_feed):
+        """Mimics ort.InferenceSession.run(output_names, input_feed)."""
+        for name in self._input_names:
+            if name in input_feed:
+                self._infer_request.set_tensor(name, input_feed[name])
+        self._infer_request.infer()
+        result = self._infer_request.get_output_tensor(0).data
+        return (result,)
+
+try:
+    import openvino as ov
+    _openvino_available = True
+    _ov_core = ov.Core()
+    _ov_gpu_devices = [d for d in _ov_core.available_devices if "GPU" in d.upper()]
+    if _ov_gpu_devices:
+        logger.info(f"OpenVINO GPU devices: {_ov_gpu_devices}")
+        for d in _ov_gpu_devices:
+            name = _ov_core.get_property(d, "FULL_DEVICE_NAME")
+            logger.info(f"  {d}: {name}")
+    else:
+        logger.info(f"OpenVINO available (CPU only): {_ov_core.available_devices}")
+except ImportError:
+    logger.info("OpenVINO not installed, using CPU only")
+except Exception as e:
+    logger.warning(f"OpenVINO init failed: {e}")
 
 # === Persistent model + voice style cache ===
 logger.info("Loading Supertonic 3 model...")
@@ -50,6 +91,51 @@ def get_voice_style(voice_name: str):
 logger.info(f"Pre-warming voice '{DEFAULT_VOICE}'...")
 get_voice_style(DEFAULT_VOICE)
 logger.info("Voice style cached")
+
+# === Replace bottleneck models with OpenVINO GPU ===
+_ov_ve_model = None
+_ov_voc_model = None
+
+if _ov_gpu_devices:
+    logger.info("Compiling vector estimator and vocoder on GPU with OpenVINO...")
+    try:
+        onnx_dir = MODEL_DIR / "onnx"
+        
+        # VE (bottleneck #1)
+        t0_ov = time.time()
+        ve_onnx_path = str(onnx_dir / "vector_estimator.onnx")
+        ve_model = _ov_core.read_model(ve_onnx_path)
+        # Set optimal config for GPU
+        _ov_core.set_property("GPU", {"GPU_ENABLE_LOOP_UNROLLING": "YES"})
+        ve_compiled = _ov_core.compile_model(ve_model, "GPU")
+        ve_inputs = [i.any_name for i in ve_model.inputs]
+        ve_output = ve_model.output(0).any_name
+        _ov_ve_model = OpenVINOModel(ve_compiled, ve_inputs, ve_output)
+        t_ve_ov = time.time() - t0_ov
+        logger.info(f"  VE compiled on GPU in {t_ve_ov:.1f}s (inputs={ve_inputs})")
+        
+        # Vocoder (bottleneck #2)
+        t0_ov = time.time()
+        voc_onnx_path = str(onnx_dir / "vocoder.onnx")
+        voc_model = _ov_core.read_model(voc_onnx_path)
+        voc_compiled = _ov_core.compile_model(voc_model, "GPU")
+        voc_inputs = [i.any_name for i in voc_model.inputs]
+        voc_output = voc_model.output(0).any_name
+        _ov_voc_model = OpenVINOModel(voc_compiled, voc_inputs, voc_output)
+        t_voc_ov = time.time() - t0_ov
+        logger.info(f"  Vocoder compiled on GPU in {t_voc_ov:.1f}s (inputs={voc_inputs})")
+        
+        # Replace ORT sessions with OpenVINO GPU versions
+        tts.vector_est_ort = _ov_ve_model
+        tts.vocoder_ort = _ov_voc_model
+        logger.info("VE and Vocoder now running on GPU via OpenVINO")
+    except Exception as e:
+        logger.warning(f"OpenVINO GPU compile failed: {e}")
+        logger.warning("Falling back to CPU for all models")
+        _ov_ve_model = None
+        _ov_voc_model = None
+else:
+    logger.info("No OpenVINO GPU devices, using CPU only")
 
 
 def split_sentences(text: str):
@@ -267,14 +353,13 @@ class StreamingTTSHandler(BaseHTTPRequestHandler):
             return st.pack("<HI", sr // 100, data_len)
 
         self.send_response(200)
-        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Type", "audio/pcm; rate=44100; channels=1")
         self.send_header("X-TTFA", f"{T3 - T0:.3f}")
         self.send_header("X-Gen-Time", f"{chunk0_gen:.3f}")
         self.send_header("X-Total-Chunks", str(n_chunks))
         self.send_header("X-Sample-Rate", str(sr))
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Connection", "close")
-        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Connection", "keep-alive")
         # T4: first byte sent (headers written)
         self.end_headers()
 
@@ -303,19 +388,21 @@ class StreamingTTSHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/health":
-            status = json.dumps({
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Connection", "keep-alive")
+            self.end_headers()
+            status = {
                 "status": "ok",
                 "model": "supertonic3_final",
                 "sample_rate": tts.sample_rate,
                 "voice_cache": list(_voice_cache.keys()),
                 "steps_default": DEFAULT_STEPS,
-            }).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(status)))
-            self.send_header("Connection", "keep-alive")
-            self.end_headers()
-            self.wfile.write(status)
+                "providers": ["CPUExecutionProvider"],
+                "openvino_available": _openvino_available,
+                "gpu_devices": _ov_gpu_devices,
+            }
+            self.wfile.write(json.dumps(status).encode())
         elif self.path == "/voices":
             voices = sorted(p.stem for p in (MODEL_DIR / "voice_styles").glob("*.json"))
             self.send_response(200)

@@ -8,5 +8,10 @@ services:
     restart: unless-stopped
     ports:
       - "8020:8020"
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "44"   # video
+      - "109"  # render
     environment:
       - PYTHONUNBUFFERED=1

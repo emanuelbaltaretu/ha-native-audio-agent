@@ -12,7 +12,9 @@ license = "MIT"
 authors = [
   { name = "HA Native Audio Agent contributors" }
 ]
-dependencies = []
+dependencies = [
+    "httpx>=0.28",
+]
 
 [project.optional-dependencies]
 dev = [
