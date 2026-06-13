@@ -20,15 +20,11 @@ from dataclasses import dataclass, field
 import httpx
 
 from .emitter import AudioChunk
+from .protocol import PCM_FRAME_HEADER_SIZE, decode_pcm_frame_header
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_TTS_URL = "http://localhost:8020"
-
-# Tiny binary header for raw PCM chunks: sample_rate//100 (H) + byte_count (I)
-_PCM_CHUNK_HEADER_FMT = "<HI"
-_PCM_CHUNK_HEADER_SIZE = struct.calcsize(_PCM_CHUNK_HEADER_FMT)
-
 
 @dataclass
 class TTFAStats:
@@ -116,7 +112,11 @@ class TTSClientConfig:
     voice: str = "F1"
     lang: str = "ro"
     steps: int = 5
+    first_steps: int | None = None
     speed: float = 1.5
+    first_max: int | None = None
+    next_max: int | None = None
+    pcm_frame_bytes: int | None = None
     timeout: float = 30.0
     max_retries: int = 2
 
@@ -161,6 +161,44 @@ class TTSClient:
     def config(self) -> TTSClientConfig:
         return self._config
 
+    def _payload(
+        self,
+        text: str,
+        *,
+        voice: str | None = None,
+        lang: str | None = None,
+        steps: int | None = None,
+        first_steps: int | None = None,
+        speed: float | None = None,
+        first_max: int | None = None,
+        next_max: int | None = None,
+        pcm_frame_bytes: int | None = None,
+    ) -> dict:
+        payload = {
+            "text": text,
+            "voice": voice or self._config.voice,
+            "lang": lang or self._config.lang,
+            "steps": steps if steps is not None else self._config.steps,
+            "speed": speed if speed is not None else self._config.speed,
+        }
+        resolved_first_steps = (
+            first_steps if first_steps is not None else self._config.first_steps
+        )
+        resolved_first_max = first_max if first_max is not None else self._config.first_max
+        resolved_next_max = next_max if next_max is not None else self._config.next_max
+        resolved_pcm_frame_bytes = (
+            pcm_frame_bytes if pcm_frame_bytes is not None else self._config.pcm_frame_bytes
+        )
+        if resolved_first_steps is not None:
+            payload["first_steps"] = resolved_first_steps
+        if resolved_first_max is not None:
+            payload["first_max"] = resolved_first_max
+        if resolved_next_max is not None:
+            payload["next_max"] = resolved_next_max
+        if resolved_pcm_frame_bytes is not None:
+            payload["pcm_frame_bytes"] = resolved_pcm_frame_bytes
+        return payload
+
     async def health(self) -> dict:
         resp = await self._http.get(f"{self._config.url}/health")
         resp.raise_for_status()
@@ -178,16 +216,24 @@ class TTSClient:
         voice: str | None = None,
         lang: str | None = None,
         steps: int | None = None,
+        first_steps: int | None = None,
         speed: float | None = None,
+        first_max: int | None = None,
+        next_max: int | None = None,
+        pcm_frame_bytes: int | None = None,
     ) -> tuple[bytes, float]:
         """Non-streaming synthesize via /tts. Returns (wav_bytes, duration_seconds)."""
-        payload = {
-            "text": text,
-            "voice": voice or self._config.voice,
-            "lang": lang or self._config.lang,
-            "steps": steps or self._config.steps,
-            "speed": speed or self._config.speed,
-        }
+        payload = self._payload(
+            text,
+            voice=voice,
+            lang=lang,
+            steps=steps,
+            first_steps=first_steps,
+            speed=speed,
+            first_max=first_max,
+            next_max=next_max,
+            pcm_frame_bytes=pcm_frame_bytes,
+        )
         resp = await self._http.post(f"{self._config.url}/tts", json=payload)
         resp.raise_for_status()
         duration = float(resp.headers.get("X-Audio-Duration", 0))
@@ -200,17 +246,25 @@ class TTSClient:
         voice: str | None = None,
         lang: str | None = None,
         steps: int | None = None,
+        first_steps: int | None = None,
         speed: float | None = None,
+        first_max: int | None = None,
+        next_max: int | None = None,
+        pcm_frame_bytes: int | None = None,
         on_chunk: Callable[[AudioChunk], None] | None = None,
     ) -> list[AudioChunk]:
         """Streaming via /tts/stream (chunked WAV, legacy)."""
-        payload = {
-            "text": text,
-            "voice": voice or self._config.voice,
-            "lang": lang or self._config.lang,
-            "steps": steps or self._config.steps,
-            "speed": speed or self._config.speed,
-        }
+        payload = self._payload(
+            text,
+            voice=voice,
+            lang=lang,
+            steps=steps,
+            first_steps=first_steps,
+            speed=speed,
+            first_max=first_max,
+            next_max=next_max,
+            pcm_frame_bytes=pcm_frame_bytes,
+        )
 
         async with self._http.stream("POST", f"{self._config.url}/tts/stream", json=payload) as resp:
             resp.raise_for_status()
@@ -253,7 +307,11 @@ class TTSClient:
         voice: str | None = None,
         lang: str | None = None,
         steps: int | None = None,
+        first_steps: int | None = None,
         speed: float | None = None,
+        first_max: int | None = None,
+        next_max: int | None = None,
+        pcm_frame_bytes: int | None = None,
         on_chunk: Callable[[AudioChunk], None] | None = None,
     ) -> tuple[list[AudioChunk], Profile]:
         """Streaming via /tts/stream-pcm (raw PCM, low overhead).
@@ -269,13 +327,17 @@ class TTSClient:
         profile = Profile()
         profile.mark("T0")  # request created
 
-        payload = {
-            "text": text,
-            "voice": voice or self._config.voice,
-            "lang": lang or self._config.lang,
-            "steps": steps or self._config.steps,
-            "speed": speed or self._config.speed,
-        }
+        payload = self._payload(
+            text,
+            voice=voice,
+            lang=lang,
+            steps=steps,
+            first_steps=first_steps,
+            speed=speed,
+            first_max=first_max,
+            next_max=next_max,
+            pcm_frame_bytes=pcm_frame_bytes,
+        )
 
         async with self._http.stream(
             "POST", f"{self._config.url}/tts/stream-pcm", json=payload
@@ -287,7 +349,7 @@ class TTSClient:
             sr = int(resp.headers.get("X-Sample-Rate", 44100))
             server_ttfa = float(resp.headers.get("X-TTFA", 0))
             server_gen = float(resp.headers.get("X-Gen-Time", 0))
-            total_chunks = int(resp.headers.get("X-Total-Chunks", "1"))
+            total_chunks = int(resp.headers.get("X-Total-Chunks", "0"))
 
             chunks: list[AudioChunk] = []
             buf = b""
@@ -295,14 +357,18 @@ class TTSClient:
 
             async for raw in resp.aiter_bytes():
                 buf += raw
-                while len(buf) >= _PCM_CHUNK_HEADER_SIZE:
-                    sr_div100, byte_count = struct.unpack_from(_PCM_CHUNK_HEADER_FMT, buf)
-                    actual_sr = sr_div100 * 100
-                    total_size = _PCM_CHUNK_HEADER_SIZE + byte_count
+                while len(buf) >= PCM_FRAME_HEADER_SIZE:
+                    frame_header = decode_pcm_frame_header(buf[:PCM_FRAME_HEADER_SIZE])
+                    if frame_header.is_eof:
+                        buf = buf[PCM_FRAME_HEADER_SIZE:]
+                        break
+                    actual_sr = frame_header.sample_rate
+                    byte_count = frame_header.byte_count
+                    total_size = PCM_FRAME_HEADER_SIZE + byte_count
                     if len(buf) < total_size:
                         break  # incomplete chunk
 
-                    pcm_data = buf[_PCM_CHUNK_HEADER_SIZE:total_size]
+                    pcm_data = buf[PCM_FRAME_HEADER_SIZE:total_size]
                     buf = buf[total_size:]
                     chunk_count += 1
 
@@ -310,7 +376,7 @@ class TTSClient:
                     ac = AudioChunk(
                         data=pcm_data, sample_rate=actual_sr,
                         num_channels=1, duration=dur,
-                        is_final=(chunk_count >= total_chunks),
+                        is_final=(total_chunks > 0 and chunk_count >= total_chunks),
                     )
                     chunks.append(ac)
 

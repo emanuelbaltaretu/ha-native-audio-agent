@@ -132,6 +132,42 @@ Repeat until LLM finishes
 
 **Recommended config for vm101:** steps=5, speed=1.5 — best quality, TTFA still under 0.5s.
 
+### 2026-06-13 update: first-frame TTFA on RPi client
+
+The previous numbers measured server-side first chunk generation. The current PCM endpoint
+also frames generated PCM into smaller pieces (`pcm_frame_bytes`, default `8192`) so playback
+can begin as soon as the first frame arrives.
+
+For `"Am aprins lumina din dormitor."`, measured from `rpi166` to vm101:
+
+| Config | First PCM frame p50 | Server TTFA p50 | Full stream p50 |
+|---|---:|---:|---:|
+| `steps=5` | 0.897s | 0.892s | 0.901s |
+| `steps=3` | 0.529s | 0.523s | 0.532s |
+| `steps=5, first_steps=3` | 0.608s | 0.603s | 0.611s |
+| `steps=5, first_steps=3, first_max=18` | **0.419s** | **0.414s** | 1.096s |
+| `steps=5, first_steps=3, first_max=14` | 0.430s | 0.424s | 1.032s |
+
+Interpretation: with Supertonic, TTFA is still bounded by full generation of the first
+text chunk. Making the first chunk smaller or using fewer first steps reduces latency,
+but it can audibly damage the opening phrase. These settings should stay experimental
+until each candidate is validated with live listening tests.
+
+## Code Architecture Cleanup
+
+The TTS backend now uses shared package code:
+
+| Module | Purpose |
+|---|---|
+| `ha_native_audio_agent.tts.supertonic_server` | HTTP server and Supertonic runtime |
+| `ha_native_audio_agent.tts.protocol` | Framed PCM encode/decode helpers and EOF marker |
+| `ha_native_audio_agent.tts.chunking` | Shared text chunking |
+| `ha_native_audio_agent.tts.live_play` | Docker-first live playback CLI |
+| `ha_native_audio_agent.tts.player` | Persistent `aplay` wrappers |
+
+The Docker entrypoints in `docker/vm101/tts_server.py` and `docker/rpi-tts/tts_server.py`
+only import and call the shared server. This prevents drift between vm101 and RPi builds.
+
 ### Final Architecture
 
 ```

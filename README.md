@@ -23,6 +23,10 @@ The text-to-speech runs as a **dedicated Docker container on vm101** (192.168.0.
 | vm101 (prod-gpu) | 192.168.0.55 | Supertonic ONNX TTS server |
 | TTS model | Supertonic 3 FINAL | Vector estimator INT8, rest FP32 |
 
+The Supertonic server implementation lives in the Python package
+(`ha_native_audio_agent.tts.supertonic_server`) and the Docker directories are runtime
+packaging only. Model weights are mounted from local paths and are never committed.
+
 See [`docs/deployment.md`](docs/deployment.md) for setup and [`docs/tts-optimization.md`](docs/tts-optimization.md) for benchmarks.
 
 ## Current Status
@@ -34,6 +38,9 @@ This repository is being scaffolded for Milestone 0, a technical spike. See [`do
 ```bash
 python -m compileall src tests
 python -m pytest
+docker compose --profile tools config
+docker compose -f docker/vm101/docker-compose.yml config
+docker compose -f docker/rpi-tts/docker-compose.yml config
 ```
 
 Hardware and provider diagnostics are available as explicit commands so the default test suite remains offline and safe.

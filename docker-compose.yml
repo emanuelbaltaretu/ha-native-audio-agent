@@ -5,7 +5,8 @@ services:
     image: ha-native-audio-agent:milestone-0
     platform: linux/arm64/v8
     env_file:
-      - .env
+      - path: .env
+        required: false
     devices:
       - /dev/snd:/dev/snd
     group_add:
@@ -14,3 +15,22 @@ services:
       - ./config:/app/config:ro
       - ./audio-diagnostics:/app/audio-diagnostics
     command: ["python", "-m", "ha_native_audio_agent"]
+
+  tts-play-test:
+    profiles: ["tools"]
+    build:
+      context: .
+    image: ha-native-audio-agent:milestone-0
+    platform: linux/arm64/v8
+    devices:
+      - /dev/snd:/dev/snd
+    group_add:
+      - audio
+    command:
+      - "python"
+      - "-m"
+      - "ha_native_audio_agent.tts.live_play"
+      - "--url"
+      - "${TTS_STREAM_URL:-http://192.168.0.55:8020/tts/stream-pcm}"
+      - "--device"
+      - "${TTS_ALSA_DEVICE:-plughw:0,0}"

@@ -1,17 +1,24 @@
 services:
   supertonic-tts:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: docker/vm101/Dockerfile
     container_name: supertonic-tts
     image: supertonic-tts:v101
+    platform: linux/amd64
     restart: unless-stopped
     ports:
       - "8020:8020"
+    volumes:
+      - "${SUPERTONIC_MODEL_DIR_HOST:-./models/supertonic3_final}:/root/.cache/supertonic3:ro"
     devices:
       - /dev/dri:/dev/dri
     group_add:
       - "44"   # video
       - "109"  # render
     environment:
-      - PYTHONUNBUFFERED=1
+      PYTHONUNBUFFERED: "1"
+      TTS_FIRST_CHUNK_MAX: "${TTS_FIRST_CHUNK_MAX:-60}"
+      TTS_NEXT_CHUNK_MAX: "${TTS_NEXT_CHUNK_MAX:-240}"
+      TTS_PCM_FRAME_BYTES: "${TTS_PCM_FRAME_BYTES:-8192}"
+      TTS_OPENVINO_ENABLED: "${TTS_OPENVINO_ENABLED:-auto}"

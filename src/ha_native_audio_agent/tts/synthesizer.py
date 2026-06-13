@@ -172,8 +172,8 @@ class SynthesizeStream:
                 if not text:
                     continue
 
-                # Synthesize this chunk via the client
-                chunks = await self._client.synthesize_stream(
+                # Use the raw PCM endpoint; the WAV endpoint is kept only for compatibility.
+                chunks, _profile = await self._client.synthesize_stream_pcm(
                     text=text,
                     on_chunk=lambda c: self._output_ch.put_nowait(c),
                 )

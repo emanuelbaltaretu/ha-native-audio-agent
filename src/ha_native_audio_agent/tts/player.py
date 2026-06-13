@@ -11,7 +11,7 @@ import logging
 import subprocess
 from collections.abc import Callable
 
-from .client import AudioChunk
+from .emitter import AudioChunk
 
 logger = logging.getLogger(__name__)
 
@@ -110,3 +110,79 @@ class PersistentPlayer:
 
     def __del__(self) -> None:
         self._stop_aplay()
+
+
+class RawAplayPlayer:
+    """Synchronous persistent `aplay` wrapper for streaming PCM frames.
+
+    This is useful in non-async backend paths and CLI smoke tests where frames arrive from a
+    blocking HTTP response. Keep one instance alive across turns to avoid respawning `aplay`.
+    """
+
+    def __init__(self, device: str = ALSA_DEVICE) -> None:
+        self._device = device
+        self._proc: subprocess.Popen | None = None
+        self._current_sr = 0
+        self._current_ch = 1
+
+    @property
+    def is_open(self) -> bool:
+        return self._proc is not None and self._proc.stdin is not None
+
+    def start(self, sample_rate: int, channels: int = 1) -> None:
+        if self.is_open and sample_rate == self._current_sr and channels == self._current_ch:
+            return
+        self.close()
+        self._proc = subprocess.Popen(
+            [
+                "aplay",
+                "-D",
+                self._device,
+                "-r",
+                str(sample_rate),
+                "-c",
+                str(channels),
+                "-f",
+                "S16_LE",
+                "-t",
+                "raw",
+            ],
+            stdin=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        self._current_sr = sample_rate
+        self._current_ch = channels
+
+    def write(self, data: bytes, *, sample_rate: int, channels: int = 1) -> None:
+        self.start(sample_rate, channels)
+        if not self._proc or not self._proc.stdin:
+            raise RuntimeError("aplay did not expose stdin")
+        try:
+            self._proc.stdin.write(data)
+            self._proc.stdin.flush()
+        except BrokenPipeError:
+            logger.warning("aplay pipe broken, restarting")
+            self.close()
+            self.start(sample_rate, channels)
+            if not self._proc or not self._proc.stdin:
+                raise RuntimeError("aplay did not expose stdin after restart")
+            self._proc.stdin.write(data)
+            self._proc.stdin.flush()
+
+    def close(self) -> None:
+        if self._proc:
+            try:
+                if self._proc.stdin:
+                    self._proc.stdin.close()
+                self._proc.wait(timeout=2)
+            except Exception:
+                self._proc.kill()
+            finally:
+                self._proc = None
+                self._current_sr = 0
+
+    def __enter__(self) -> RawAplayPlayer:
+        return self
+
+    def __exit__(self, *args) -> None:
+        self.close()

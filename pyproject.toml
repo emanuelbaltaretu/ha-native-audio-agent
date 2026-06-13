@@ -16,7 +16,25 @@ dependencies = [
     "httpx>=0.28",
 ]
 
+[project.scripts]
+ha-native-audio-agent-play-tts = "ha_native_audio_agent.tts.live_play:main"
+
 [project.optional-dependencies]
+audio = [
+  # Runtime also needs `aplay` from alsa-utils in the container/host.
+]
+tts-server = [
+  "numpy",
+  "soundfile>=0.12",
+  "supertonic",
+]
+tts-server-openvino = [
+  "numpy",
+  "openvino",
+  "psutil",
+  "soundfile>=0.12",
+  "supertonic",
+]
 dev = [
   "pytest>=8.0",
   "ruff>=0.8",

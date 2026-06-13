@@ -1,4 +1,4 @@
-FROM --platform=linux/arm64 python:3.11-slim-bookworm
+FROM python:3.11-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
@@ -13,15 +13,14 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# Install supertonic
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir "supertonic" "soundfile>=0.12"
+    && pip install --no-cache-dir "supertonic" "soundfile>=0.12" "numpy"
 
-# Copy optimized model (FINAL: vector_estimator INT8, rest FP32)
-COPY models/supertonic3_final/ /root/.cache/supertonic3/
+COPY pyproject.toml README.md ./
+COPY src ./src
+COPY docker/rpi-tts/tts_server.py ./tts_server.py
 
-# Copy TTS server
-COPY tts_server.py .
+RUN pip install --no-cache-dir --no-deps -e .
 
 EXPOSE 8020
 

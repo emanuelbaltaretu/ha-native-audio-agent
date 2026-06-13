@@ -14,8 +14,11 @@ WORKDIR /app
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir "supertonic" "soundfile>=0.12" "psutil" "numpy" "openvino"
 
-COPY models/supertonic3_final/ /root/.cache/supertonic3/
-COPY tts_server.py .
+COPY pyproject.toml README.md ./
+COPY src ./src
+COPY docker/vm101/tts_server.py ./tts_server.py
+
+RUN pip install --no-cache-dir --no-deps -e .
 
 EXPOSE 8020
 

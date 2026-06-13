@@ -1,14 +1,20 @@
 services:
   supertonic-tts:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: docker/rpi-tts/Dockerfile
     container_name: supertonic-tts
+    platform: linux/arm64/v8
     restart: unless-stopped
     network_mode: "host"
     environment:
-      - PULSE_SERVER=unix:/run/user/1000/pulse/native
-      - XDG_RUNTIME_DIR=/run/user/1000
+      PYTHONUNBUFFERED: "1"
+      TTS_OPENVINO_ENABLED: "false"
+      TTS_FIRST_CHUNK_MAX: "${TTS_FIRST_CHUNK_MAX:-60}"
+      TTS_NEXT_CHUNK_MAX: "${TTS_NEXT_CHUNK_MAX:-240}"
+      TTS_PCM_FRAME_BYTES: "${TTS_PCM_FRAME_BYTES:-8192}"
+      PULSE_SERVER: "unix:/run/user/1000/pulse/native"
+      XDG_RUNTIME_DIR: "/run/user/1000"
     devices:
       - /dev/snd:/dev/snd
     group_add:
@@ -16,6 +22,7 @@ services:
     cap_add:
       - SYS_NICE
     volumes:
+      - "${SUPERTONIC_MODEL_DIR_HOST:-./models/supertonic3_final}:/root/.cache/supertonic3:ro"
       - /run/user/1000:/run/user/1000:rw
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
